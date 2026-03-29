@@ -4906,6 +4906,8 @@ end."></textarea>
         const moduleScores   = {};
         const GOOGLE_SCRIPT_URL = 'https://script.google.com/macros/s/AKfycbx7Pv553hfNHBQSMF6q2jQfihcfjDA34-iRa6QtLg3Jlbe_gSFw3LHSc_ML4vRAYFsR/exec';
         const SHEETS_CONFIGURED = !GOOGLE_SCRIPT_URL.includes('YOUR_APPS_SCRIPT_URL_HERE');
+        // Source-of-truth for one-attempt lock — not tied to display style
+        const submittedModuleSet = new Set();
         if (SHEETS_CONFIGURED) {
             const banner = document.getElementById('setup-banner');
             if (banner) banner.style.display = 'none';}
@@ -6145,7 +6147,7 @@ saveProgress();
                 msgBox.innerHTML = `<div class="font-mono text-xs mb-1" style="color:#16a34a;opacity:0.8">// ASSESSMENT SUBMITTED</div><div style="font-weight:600;font-size:19px;color:#1a1f2e">Score: ${earnedMarks} / ${totalMarks} &nbsp;(${percentage}%)</div><div class="text-sm mt-1" style="color:#3fb950">Your score has been recorded. Module 2 has been unlocked. Review your answers below — correct answers are shown in green.</div>`;
                 completedModules++;
                 moduleScores[1] = { earned: earnedMarks, total: totalMarks, pct: percentage };
-                // Lock student name/grade fields so they cannot be changed
+                submittedModuleSet.add(1); // lock this module permanently
                 ['firstName','lastName','grade'].forEach(name => {
                     const el = form.querySelector(`[name="${name}"]`);
                     if (el) el.disabled = true;
@@ -6205,7 +6207,7 @@ saveProgress();
                 msgBox.scrollIntoView({ behavior:'smooth', block:'nearest' });
                 completedModules++;
                 moduleScores[moduleNum] = { earned: earnedMarks, total: totalMarks, pct: percentage };
-                // Lock student name/grade fields
+                submittedModuleSet.add(moduleNum); // lock this module permanently
                 ['firstName','lastName','grade'].forEach(name => {
                     const el = form.querySelector(`[name="${name}"]`);
                     if (el) el.disabled = true;
@@ -6556,12 +6558,8 @@ saveProgress();
             gate.style.display = '';
         }
         function saveProgress() {
-            // Collect current answers for any newly submitted modules
-            const submittedModules = [1,2,3,4,5,6,7].filter(m => {
-                const id = m === 1 ? 'module1-assessment' : `module${m}-assessment`;
-                const f  = document.getElementById(id);
-                return f && f.style.display === 'none';
-            });
+            // Use the Set as the authoritative source — not display style
+            const submittedModules = [...submittedModuleSet];
             // Load existing saved data so we don't overwrite previously saved answers
             let existingAnswers = {};
             try {
@@ -6608,23 +6606,35 @@ saveProgress();
                 for (let m = 2; m <= unlockedModules; m++) silentUnlock(m);restoreCodingBadges();
                 const savedAnswers = data.assessmentAnswers || {};
                 (data.assessmentsSubmitted || []).forEach(m => {
-                    // Show the assessment body (so student can review answers)
-                    const id = m === 1 ? 'module1-assessment' : `module${m}-assessment`;
-                    const f  = document.getElementById(id);
-                    if (f) f.style.display = '';          // keep visible for review
+                    submittedModuleSet.add(m); // restore the lock
+                    // Reveal the assessment body wrapper (it starts with class="hidden")
+                    const bodyEl = document.getElementById(`assessment-body-${m}`);
+                    if (bodyEl) bodyEl.classList.remove('hidden');
                     // Replace the gate with a locked banner
                     _showLockedGate(m);
                     // Restore read-only answer feedback
                     _restoreAssessmentFeedback(m, savedAnswers[m]);
+                    // Update the answered counter to show full completion
+                    const s = moduleScores[m];
+                    if (s) {
+                        const counterId = m === 1 ? 'q-counter' : `q-counter-${m}`;
+                        const counter = document.getElementById(counterId);
+                        if (counter) {
+                            counter.textContent = `${s.total} / ${s.total} answered`;
+                            counter.style.background = 'rgba(63,185,80,0.12)';
+                            counter.style.borderColor = 'rgba(63,185,80,0.3)';
+                            counter.style.color = '#3fb950';
+                        }
+                    }
                     document.querySelector(`#module-${m} .status-badge`)?.classList.remove('hidden');
                     // Show the score banner
                     const msgId = m === 1 ? 'form-message' : `form-message-${m}`;
                     const msg   = document.getElementById(msgId);
                     if (msg && moduleScores[m]) {
-                        const s = moduleScores[m];
+                        const sc = moduleScores[m];
                         msg.classList.remove('hidden');
                         msg.className = 'mb-6 msg-pass';
-                        msg.innerHTML = `<div class="font-mono text-xs mb-1" style="color:#16a34a;opacity:0.8">// ASSESSMENT COMPLETE — READ ONLY</div><div style="font-weight:600;font-size:19px;color:#1a1f2e">Score: ${s.earned} / ${s.total} &nbsp;(${s.pct}%)</div><div class="text-sm mt-1" style="color:#34c05a">This assessment is submitted. You can review your answers below — correct answers are highlighted in green.</div>`;
+                        msg.innerHTML = `<div class="font-mono text-xs mb-1" style="color:#16a34a;opacity:0.8">// ASSESSMENT COMPLETE — READ ONLY</div><div style="font-weight:600;font-size:19px;color:#1a1f2e">Score: ${sc.earned} / ${sc.total} &nbsp;(${sc.pct}%)</div><div class="text-sm mt-1" style="color:#34c05a">This assessment is submitted. You can review your answers below — correct answers are highlighted in green.</div>`;
                     }
                 });
 updateProgressBar();updateResultsDashboard();
@@ -6726,6 +6736,18 @@ updateProgressBar();updateResultsDashboard();
                 localStorage.setItem('pascal_timers', JSON.stringify(td));
             } catch(e) {}}
         function _clearTimerState(moduleNum) {
+            // Stop the running interval immediately
+            if (_timers[moduleNum]) {
+                clearInterval(_timers[moduleNum]);
+                delete _timers[moduleNum];
+            }
+            // Update the display to show a clean "submitted" state
+            const display = document.getElementById(`timer-display-${moduleNum}`);
+            if (display) {
+                display.textContent = '✓ Submitted';
+                display.className = 'timer-display';
+                display.style.color = '#3fb950';
+            }
             try {
                 const td = JSON.parse(localStorage.getItem('pascal_timers') || '{}');
                 delete td[moduleNum];
