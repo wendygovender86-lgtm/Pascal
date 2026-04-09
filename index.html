@@ -6283,6 +6283,17 @@ saveProgress();
                         if (answered.size === 20) { counter.style.background='rgba(63,185,80,0.12)'; counter.style.borderColor='rgba(63,185,80,0.3)'; counter.style.color='#3fb950'; }
                     }break;}}});
         // ═══════════════════════════════════════════════════════════
+        // AUTOSAVE ON INPUT — saves IPO and coding content as students type
+        // ═══════════════════════════════════════════════════════════
+        let _autoSaveTimer = null;
+        document.addEventListener('input', function(e) {
+            const tag = e.target.tagName;
+            if (tag === 'TEXTAREA' || (tag === 'INPUT' && e.target.type === 'text')) {
+                clearTimeout(_autoSaveTimer);
+                _autoSaveTimer = setTimeout(saveProgress, 1500);
+            }
+        });
+        // ═══════════════════════════════════════════════════════════
         // INTERACTIVE WIDGETS
         // ═══════════════════════════════════════════════════════════
         // ── Annotation popup ──
@@ -6563,6 +6574,55 @@ saveProgress();
                 </div>`;
             gate.style.display = '';
         }
+        function _collectFieldValues(ids) {
+            // Collect current values from a list of element IDs (inputs/textareas)
+            const values = {};
+            ids.forEach(id => {
+                const el = document.getElementById(id);
+                if (el && el.value !== undefined) values[id] = el.value;
+            });
+            return values;
+        }
+        function _restoreFieldValues(saved) {
+            // Restore saved values back into inputs/textareas
+            if (!saved) return;
+            Object.entries(saved).forEach(([id, val]) => {
+                const el = document.getElementById(id);
+                if (el && el.value !== undefined && !el.disabled) el.value = val;
+            });
+        }
+        // All IPO textarea IDs across all modules
+        const _ALL_IPO_IDS = [
+            'ipo1-in','ipo1-pr','ipo1-out',
+            'ipo2-in','ipo2-pr','ipo2-out',
+            'ipo2-1-in','ipo2-1-pr','ipo2-1-out','ipo2-2-in','ipo2-2-pr','ipo2-2-out',
+            'ipo2-3-in','ipo2-3-pr','ipo2-3-out','ipo2-4-in','ipo2-4-pr','ipo2-4-out','ipo2-5-in','ipo2-5-pr','ipo2-5-out',
+            'ipo3-in','ipo3-pr','ipo3-out',
+            'ipo3-1-in','ipo3-1-pr','ipo3-1-out','ipo3-2-in','ipo3-2-pr','ipo3-2-out',
+            'ipo3-3-in','ipo3-3-pr','ipo3-3-out','ipo3-4-in','ipo3-4-pr','ipo3-4-out','ipo3-5-in','ipo3-5-pr','ipo3-5-out',
+            'ipo4-in','ipo4-pr','ipo4-out',
+            'ipo4-1-in','ipo4-1-pr','ipo4-1-out','ipo4-2-in','ipo4-2-pr','ipo4-2-out',
+            'ipo4-3-in','ipo4-3-pr','ipo4-3-out','ipo4-4-in','ipo4-4-pr','ipo4-4-out','ipo4-5-in','ipo4-5-pr','ipo4-5-out',
+            'ipo5-in','ipo5-pr','ipo5-out',
+            'ipo5-1-in','ipo5-1-pr','ipo5-1-out','ipo5-2-in','ipo5-2-pr','ipo5-2-out',
+            'ipo5-3-in','ipo5-3-pr','ipo5-3-out','ipo5-4-in','ipo5-4-pr','ipo5-4-out','ipo5-5-in','ipo5-5-pr','ipo5-5-out',
+            'ipo6-in','ipo6-pr','ipo6-out',
+            'ipo6-1-in','ipo6-1-pr','ipo6-1-out','ipo6-2-in','ipo6-2-pr','ipo6-2-out',
+            'ipo6-3-in','ipo6-3-pr','ipo6-3-out','ipo6-4-in','ipo6-4-pr','ipo6-4-out','ipo6-5-in','ipo6-5-pr','ipo6-5-out',
+            'ipo7-in','ipo7-pr','ipo7-out',
+            'ipo7-1-in','ipo7-1-pr','ipo7-1-out','ipo7-2-in','ipo7-2-pr','ipo7-2-out',
+            'ipo7-3-in','ipo7-3-pr','ipo7-3-out','ipo7-4-in','ipo7-4-pr','ipo7-4-out','ipo7-5-in','ipo7-5-pr','ipo7-5-out'
+        ];
+        // All coding task editor IDs across all modules
+        const _ALL_CODE_IDS = [
+            'code-1','code-2','code-3','code-4','code-5',
+            'm2code-1','m2code-2','m2code-3','m2code-4','m2code-5',
+            'm3code-1','m3code-2','m3code-3','m3code-4','m3code-5',
+            'm4code-1','m4code-2','m4code-3','m4code-4','m4code-5',
+            'm5code-1','m5code-2','m5code-3','m5code-4','m5code-5',
+            'm6code-1','m6code-2','m6code-3','m6code-4','m6code-5',
+            'm7code-1','m7code-2','m7code-3','m7code-4','m7code-5'
+        ];
         function saveProgress() {
             // Use the Set as the authoritative source — not display style
             const submittedModules = [...submittedModuleSet];
@@ -6587,6 +6647,8 @@ saveProgress();
                     Object.entries(moduleTaskSets).map(([k,v]) => [k, [...v]])),
                 assessmentsSubmitted: submittedModules,
                 assessmentAnswers: existingAnswers,
+                ipoValues: _collectFieldValues(_ALL_IPO_IDS),
+                codeValues: _collectFieldValues(_ALL_CODE_IDS),
                 savedAt: Date.now()};
             try {
                 localStorage.setItem(SAVE_KEY, JSON.stringify(data));
@@ -6644,6 +6706,12 @@ saveProgress();
                     }
                 });
 updateProgressBar();updateResultsDashboard();
+                // Restore IPO textarea content and coding task editor content
+                // Use setTimeout so the accordion DOM is fully ready before we set values
+                setTimeout(() => {
+                    _restoreFieldValues(data.ipoValues);
+                    _restoreFieldValues(data.codeValues);
+                }, 100);
                 const ind = document.getElementById('save-indicator');
                 if (ind && data.savedAt) {
                     const d = new Date(data.savedAt);
