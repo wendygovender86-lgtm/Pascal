@@ -5184,8 +5184,9 @@ end."></textarea>
             if (!lower.includes('begin'))  throw new SyntaxError('Error: Missing BEGIN keyword.\nStructure: program Name; begin ... end.');
             if (!lower.includes('end'))    throw new SyntaxError('Error: Missing END keyword.\nStructure: program Name; begin ... end.');
             if (!/end\s*\./.test(lower))   throw new SyntaxError('Error: Program must end with END. (end followed by a full stop).\nStructure: program Name; begin ... end.');
-            // Parse var block
+            // Parse var block — store types separately for type checking
             const vars = {};
+            const varTypes = {};
             const varMatch = /\bvar\b([\s\S]*?)\bbegin\b/i.exec(code);
             if (varMatch) {
                 for (const decl of varMatch[1].split(';')) {
@@ -5195,7 +5196,10 @@ end."></textarea>
                     if (m) {
                         const typ = m[2].toLowerCase();
                         const def = typ === 'integer' || typ === 'real' ? 0 : typ === 'boolean' ? false : '';
-                        m[1].split(',').map(n => n.trim()).filter(Boolean).forEach(n => { vars[n] = def; });
+                        m[1].split(',').map(n => n.trim()).filter(Boolean).forEach(n => {
+                            vars[n] = def;
+                            varTypes[n] = typ;
+                        });
                     }
                 }
             }
@@ -5292,6 +5296,27 @@ end."></textarea>
                     const vname = tk.v;
                     if (!(vname in vars)) throw new SyntaxError(`Error: Variable "${vname}" not declared.`);
                     const [val, newPos] = evalExprToks(toks, pos + 2, vars);
+                    // Type checking
+                    const declaredType = varTypes[vname];
+                    if (declaredType === 'integer') {
+                        if (typeof val !== 'number')
+                            throw new SyntaxError(`Type error: Cannot assign ${typeof val === 'string' ? 'a string' : 'a boolean'} to integer variable "${vname}".`);
+                        if (!Number.isInteger(val))
+                            throw new SyntaxError(`Type error: Cannot assign real number ${val} to integer variable "${vname}".
+Hint: Declare it as "real" if you need decimal values.`);
+                    } else if (declaredType === 'real') {
+                        if (typeof val !== 'number')
+                            throw new SyntaxError(`Type error: Cannot assign ${typeof val === 'string' ? 'a string' : 'a boolean'} to real variable "${vname}".`);
+                    } else if (declaredType === 'string') {
+                        if (typeof val !== 'string')
+                            throw new SyntaxError(`Type error: Cannot assign a ${typeof val} value to string variable "${vname}".`);
+                    } else if (declaredType === 'boolean') {
+                        if (typeof val !== 'boolean')
+                            throw new SyntaxError(`Type error: Cannot assign a ${typeof val} value to boolean variable "${vname}".`);
+                    } else if (declaredType === 'char') {
+                        if (typeof val !== 'string' || val.length !== 1)
+                            throw new SyntaxError(`Type error: Cannot assign "${val}" to char variable "${vname}" — char holds exactly one character.`);
+                    }
                     vars[vname] = val;
                     return newPos;
                 }
@@ -5610,7 +5635,10 @@ end."></textarea>
                     showTaskModelAnswer(mod, taskNum);
                 }
             } catch(err) {
-                errorDiv.innerHTML = err.message.replace(/\n/g, '<br>');errorDiv.classList.remove('hidden');}}
+                outputArea.style.display = 'block';
+                errorDiv.innerHTML = '<span style="color:#f85149">' + escHtml(err.message).replace(/\n/g,'<br>') + '</span>';
+                errorDiv.classList.remove('hidden');
+            }}
         // ── Variable Memory Simulator (Module 2) ──────────────────
         function runVarSim(varName, type, value, color) {
             const valEl = document.getElementById('vsim-' + varName + '-val');
@@ -5835,7 +5863,8 @@ saveProgress();
                     ? lines.map(l => '<div>' + escHtml(l || '') + '</div>').join('')
                     : '<div style="color:#1a3a6e">(no output)</div>';
             } catch(e) {
-                errDiv.innerHTML = escHtml(e.message);}}
+                errDiv.innerHTML = '<span style="color:#f85149">' + escHtml(e.message).replace(/\n/g,'<br>') + '</span>';
+            }}
         function tryItReset(id, defaultCode) {
             const editor = document.getElementById('tryit-code-' + id);
             const output = document.getElementById('tryit-output-' + id);
@@ -6329,12 +6358,12 @@ saveProgress();
         // ═══════════════════════════════════════════════════════════
         // AUTOSAVE ON INPUT — saves IPO and coding content as students type
         // ═══════════════════════════════════════════════════════════
-        let _autoSaveTimer = null;
+        window._autoSaveTimer = null;
         document.addEventListener('input', function(e) {
             const tag = e.target.tagName;
             if (tag === 'TEXTAREA' || (tag === 'INPUT' && e.target.type === 'text')) {
-                clearTimeout(_autoSaveTimer);
-                _autoSaveTimer = setTimeout(saveProgress, 1500);
+                clearTimeout(window._autoSaveTimer);
+                window._autoSaveTimer = setTimeout(saveProgress, 1500);
             }
         });
         // ═══════════════════════════════════════════════════════════
@@ -6618,21 +6647,35 @@ saveProgress();
                 </div>`;
             gate.style.display = '';
         }
+        function _isCmId(id) {
+            return !!(window._cmEditors && window._cmEditors[id]);
+        }
         function _collectFieldValues(ids) {
-            // Collect current values from a list of element IDs (inputs/textareas)
-            const values = {};
-            ids.forEach(id => {
-                const el = document.getElementById(id);
-                if (el && el.value !== undefined) values[id] = el.value;
+            // Use CodeMirror API for CM editors; .value for plain textareas/inputs
+            var values = {};
+            ids.forEach(function(id) {
+                if (_isCmId(id)) {
+                    values[id] = window._cmEditors[id].getValue();
+                } else {
+                    var el = document.getElementById(id);
+                    if (el && el.value !== undefined) values[id] = el.value;
+                }
             });
             return values;
         }
         function _restoreFieldValues(saved) {
-            // Restore saved values back into inputs/textareas
             if (!saved) return;
-            Object.entries(saved).forEach(([id, val]) => {
-                const el = document.getElementById(id);
-                if (el && el.value !== undefined && !el.disabled) el.value = val;
+            Object.keys(saved).forEach(function(id) {
+                var val = saved[id];
+                if (_isCmId(id)) {
+                    // Only restore if there is actual content worth keeping
+                    if (val && val.trim() !== '') {
+                        window._cmEditors[id].setValue(val);
+                    }
+                } else {
+                    var el = document.getElementById(id);
+                    if (el && el.value !== undefined && !el.disabled) el.value = val;
+                }
             });
         }
         function _restoreIPOGreenStyling() {
@@ -6944,26 +6987,28 @@ updateProgressBar();updateResultsDashboard();
                 editor.setSize('100%', null);
                 editor.getWrapperElement().style.minHeight = minH + 'px';
                 editor.getScrollerElement().style.minHeight = minH + 'px';
+                // Hook autosave into CodeMirror changes (CM doesn't fire DOM input events)
+                editor.on('change', function() {
+                    clearTimeout(window._autoSaveTimer);
+                    window._autoSaveTimer = setTimeout(saveProgress, 1500);
+                });
                 window._cmEditors[id] = editor;});
             // Pre-fill empty task editors with Pascal program skeleton
             (function() {
-                // Determine if a task needs var block (modules 2-7 do; module 1 doesn't)
                 const skeletonFor = function(id) {
-                    // Module 1 tasks: code-1 … code-5 (no var block)
                     if (/^code-\d+$/.test(id)) {
                         const n = id.split('-')[1];
                         return `program Task${n};\nbegin\n  { write your code here }\nend.`;
                     }
-                    // All other modules: m2code-1, m3code-1 … m7code-5 (include var block)
                     const m = id.match(/^m(\d+)code-(\d+)$/);
                     if (m) return `program Task${m[2]};\nvar\n  { declare variables here }\nbegin\n  { write your code here }\nend.`;
                     return null;
                 };
                 Object.keys(window._cmEditors).forEach(function(id) {
-                    const editor = window._cmEditors[id];
+                    var editor = window._cmEditors[id];
                     if (!editor) return;
                     if (editor.getValue().trim() === '') {
-                        const skel = skeletonFor(id);
+                        var skel = skeletonFor(id);
                         if (skel) { editor.setValue(skel); editor.setCursor({line:2,ch:2}); }
                     }
                 });
