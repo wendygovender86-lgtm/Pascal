@@ -6303,10 +6303,15 @@ end."></textarea>
                         }
                         toks.push({ t: 'str', v: s }); i = j; continue;
                     }
-                    // number
+                    // number — stop at '..' so ranges tokenise as num, '..', num
                     if (/\d/.test(src[i])) {
                         let n = '';
-                        while (i < src.length && /[\d.]/.test(src[i])) n += src[i++];
+                        while (i < src.length && /\d/.test(src[i])) n += src[i++];
+                        // consume decimal point only if NOT followed by another '.'
+                        if (i < src.length && src[i] === '.' && src[i+1] !== '.') {
+                            n += src[i++];
+                            while (i < src.length && /\d/.test(src[i])) n += src[i++];
+                        }
                         toks.push({ t: 'num', v: n }); continue;
                     }
                     // identifier / keyword
@@ -6315,9 +6320,9 @@ end."></textarea>
                         while (i < src.length && /[A-Za-z0-9_]/.test(src[i])) w += src[i++];
                         toks.push({ t: 'id', v: w }); continue;
                     }
-                    // two-char operators
+                    // two-char operators (including Pascal range '..')
                     const two = src.slice(i, i+2);
-                    if ([':=', '>=', '<=', '<>'].includes(two)) { toks.push({ t: 'op', v: two }); i += 2; continue; }
+                    if ([':=', '>=', '<=', '<>', '..'].includes(two)) { toks.push({ t: 'op', v: two }); i += 2; continue; }
                     // single-char
                     toks.push({ t: 'op', v: src[i] }); i++;
                 }
@@ -6499,6 +6504,71 @@ Hint: Declare it as "real" if you need decimal values.`);
                     }
                     return pos;
                 }
+
+                // case expr of  val: stmt; val1,val2: stmt; lo..hi: stmt; else stmt; end
+                if (kw === 'case') {
+                    pos++;
+                    const [selector, p2] = evalExprToks(toks, pos, vars, ['of']);
+                    pos = p2;
+                    if (pos < toks.length && toks[pos].v?.toLowerCase() === 'of') pos++;
+                    let matched = false;
+                    let elseToks = -1;
+                    // scan branches until 'end'
+                    while (pos < toks.length) {
+                        const kl = toks[pos].t === 'id' ? toks[pos].v.toLowerCase() : null;
+                        if (kl === 'end') { pos++; break; }
+                        if (kl === 'else') {
+                            elseToks = pos + 1; // remember where else body starts
+                            // fast-forward to 'end'
+                            let p = elseToks;
+                            while (p < toks.length && (toks[p].t !== 'id' || toks[p].v.toLowerCase() !== 'end')) p++;
+                            pos = p; // will hit 'end' on next iteration
+                            continue;
+                        }
+                        // collect labels (comma-sep, may be ranges with two '.' tokens)
+                        const labels = [];
+                        while (pos < toks.length) {
+                            const cur = toks[pos];
+                            const curl = cur.t === 'id' ? cur.v.toLowerCase() : null;
+                            if (cur.v === ':' && toks[pos+1]?.v !== ':') { pos++; break; }
+                            if (curl === 'end' || curl === 'else') break;
+                            const [v1, p3] = evalExprToks(toks, pos, vars, [',', ':', '..']);
+                            pos = p3;
+                            // check for '..' range operator (single token)
+                            if (pos < toks.length && toks[pos].v === '..') {
+                                pos++;
+                                const [v2, p4] = evalExprToks(toks, pos, vars, [',', ':']);
+                                pos = p4;
+                                labels.push({ range: true, lo: v1, hi: v2 });
+                            } else {
+                                labels.push({ range: false, v: v1 });
+                            }
+                            if (pos < toks.length && toks[pos].v === ',') pos++;
+                        }
+                        const stmtPos = pos;
+                        const stmtEnd = findStmtEnd(toks, stmtPos);
+                        const hits = labels.some(lbl => {
+                            if (lbl.range) return selector >= lbl.lo && selector <= lbl.hi;
+                            const sv = typeof selector === 'string' ? selector.toLowerCase() : selector;
+                            const lv = typeof lbl.v === 'string' ? lbl.v.toLowerCase() : lbl.v;
+                            return sv === lv;
+                        });
+                        if (hits && !matched) { matched = true; execStmt(toks, stmtPos); }
+                        pos = stmtEnd;
+                        while (pos < toks.length && toks[pos].v === ';') pos++;
+                    }
+                    if (!matched && elseToks >= 0) {
+                        let p = elseToks;
+                        while (p < toks.length) {
+                            const ekl = toks[p].t === 'id' ? toks[p].v.toLowerCase() : null;
+                            if (ekl === 'end') break;
+                            if (toks[p].v === ';') { p++; continue; }
+                            p = execStmt(toks, p);
+                            while (p < toks.length && toks[p].v === ';') p++;
+                        }
+                    }
+                    return pos;
+                }
                 // unknown — skip to next semicolon
                 while (pos < toks.length && toks[pos].v !== ';') pos++;
                 return pos;
@@ -6514,6 +6584,15 @@ Hint: Declare it as "real" if you need decimal values.`);
                         const k = toks[pos].t === 'id' ? toks[pos].v.toLowerCase() : null;
                         if (k === 'begin') depth++;
                         else if (k === 'end') { depth--; if (depth === 0) return pos + 1; }
+                        pos++;
+                    }
+                    return pos;
+                }
+                // case...of...end is compound — skip to matching end
+                if (kw === 'case') {
+                    while (pos < toks.length) {
+                        const k = toks[pos].t === 'id' ? toks[pos].v.toLowerCase() : null;
+                        if (k === 'end') return pos + 1;
                         pos++;
                     }
                     return pos;
@@ -7098,8 +7177,8 @@ saveProgress();
         ];
         function checkIPOAnswers(e) {e.preventDefault(); _checkIPO(1, IPO_ANSWERS[1], 'ipo-submit-btn');}
         IPO_ANSWERS[2] = [
-            { id:1, inKeys:['read','name','age','first'], prKeys:['greeting','←','name','age','combine','store','assign'], outKeys:['display','greeting','output','name','age'],
-              inAll:['read','name','age'], prAll:['←'], outAll:['display'],
+            { id:1, inKeys:['read','name','age','first'], prKeys:['greeting','←','+','name','age','combine','store','assign','hello'], outKeys:['display','greeting','output','name','age'],
+              inAll:['read','name','age'], outAll:['display'],
               model:{ in:'READ Name\nREAD Age', pr:"Greeting = 'Hello, ' + Name + ', Age: ' + Age", out:'DISPLAY Greeting' } },
             { id:2, inKeys:['read','product','name','price'], prKeys:['store','←','product','price','no calc','assign'], outKeys:['display','product','price','name'],
               inAll:['read','name','price'], outAll:['display'],
@@ -7107,8 +7186,8 @@ saveProgress();
             { id:3, inKeys:['read','student','name','score','mark'], prKeys:['←','message','combine','name','score','result'], outKeys:['display','message','result','output'],
               inAll:['read','name','score'], prAll:['←'], outAll:['display'],
               model:{ in:'READ StudentName\nREAD Score', pr:"Message = StudentName + ' scored: ' + Score", out:'DISPLAY Message' } },
-            { id:4, inKeys:['read','passed','bool','true','false'], prKeys:['←','store','bool','passed','assign'], outKeys:['display','passed','result','bool'],
-              inAll:['read'], prAll:['←'], outAll:['display'],
+            { id:4, inKeys:['read','passed','bool','true','false'], prKeys:['passed','bool','true','false','store','no calc','no calculation','{'], outKeys:['display','passed','result','bool'],
+              inAll:['read'], outAll:['display'],
               model:{ in:'READ Passed', pr:'{ Passed stores true or false — no calculation }', out:'DISPLAY Passed' } },
             { id:5, inKeys:['read','first','last','name','age','surname'], prKeys:['←','fullname','combine','name','first','last'], outKeys:['display','fullname','name','age','profile'],
               inAll:['read','first','age'], prAll:['←'], outAll:['display'],
