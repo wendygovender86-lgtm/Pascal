@@ -6271,7 +6271,7 @@ end."></textarea>
                     if (m) {
                         const typ = m[2].toLowerCase();
                         const def = typ === 'integer' || typ === 'real' ? 0 : typ === 'boolean' ? false : '';
-                        m[1].split(',').map(n => n.trim()).filter(Boolean).forEach(n => {
+                        m[1].split(',').map(n => n.trim().toLowerCase()).filter(Boolean).forEach(n => {
                             vars[n] = def;
                             varTypes[n] = typ;
                         });
@@ -6373,8 +6373,8 @@ end."></textarea>
                 }
                 // assignment  varname :=
                 if (tk.t === 'id' && pos + 1 < toks.length && toks[pos+1].v === ':=') {
-                    const vname = tk.v;
-                    if (!(vname in vars)) throw new SyntaxError(`Error: Variable "${vname}" not declared.`);
+                    const vname = tk.v.toLowerCase();
+                    if (!(vname in vars)) throw new SyntaxError(`Error: Variable "${tk.v}" not declared.`);
                     const [val, newPos] = evalExprToks(toks, pos + 2, vars);
                     // Type checking
                     const declaredType = varTypes[vname];
@@ -6432,8 +6432,8 @@ Hint: Declare it as "real" if you need decimal values.`);
                 if (kw === 'for') {
                     pos++;
                     if (pos >= toks.length || toks[pos].t !== 'id') throw new SyntaxError('Error: Expected variable after FOR.');
-                    const ivar = toks[pos++].v;
-                    if (!(ivar in vars)) throw new SyntaxError(`Error: Variable "${ivar}" not declared.`);
+                    const ivar = toks[pos++].v.toLowerCase();
+                    if (!(ivar in vars)) throw new SyntaxError(`Error: Variable "${toks[pos-1].v}" not declared.`);
                     if (pos >= toks.length || toks[pos].v !== ':=') throw new SyntaxError('Error: Expected := in FOR.');
                     const [startVal, p2] = evalExprToks(toks, pos + 1, vars, ['to','downto']);
                     pos = p2;
@@ -6714,7 +6714,8 @@ Hint: Declare it as "real" if you need decimal values.`);
                 if (kw === 'false') return [false, pos + 1];
                 // variable
                 if (tk.t === 'id') {
-                    if (tk.v in vars) return [vars[tk.v], pos + 1];
+                    const vkey = tk.v.toLowerCase();
+                    if (vkey in vars) return [vars[vkey], pos + 1];
                     throw new SyntaxError(`Error: Undeclared variable "${tk.v}".`);
                 }
                 throw new SyntaxError(`Error: Unexpected token "${tk.v}".`);
