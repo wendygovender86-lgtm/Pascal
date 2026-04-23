@@ -7107,6 +7107,7 @@ saveProgress();
                 el.style.background = isRight ? 'rgba(52,192,90,0.05)' : 'rgba(200,145,30,0.04)';
             });
             if (checkBtn) checkBtn.style.display = 'none';
+            saveProgress();
             // Add "Edit Answer" button if not already present
             if (!feedbackDiv.querySelector('.edit-answer-btn')) {
                 const editBtn = document.createElement('button');
@@ -7543,8 +7544,13 @@ saveProgress();
             const tag = e.target.tagName;
             if (tag === 'TEXTAREA' || (tag === 'INPUT' && e.target.type === 'text')) {
                 clearTimeout(window._autoSaveTimer);
-                window._autoSaveTimer = setTimeout(saveProgress, 1500);
+                window._autoSaveTimer = setTimeout(saveProgress, 500);
             }
+        });
+        // Save immediately when the page is about to unload (refresh / close)
+        window.addEventListener('beforeunload', function() {
+            clearTimeout(window._autoSaveTimer);
+            saveProgress();
         });
         // ═══════════════════════════════════════════════════════════
         // INTERACTIVE WIDGETS
@@ -7866,7 +7872,11 @@ saveProgress();
                     }
                 } else {
                     var el = document.getElementById(id);
-                    if (el && el.value !== undefined && !el.disabled) el.value = val;
+                    if (el && el.value !== undefined) {
+                        // Always restore textarea values (IPO / Try-It fields).
+                        // Only skip inputs that are locked assessment fields (radio/text inside submitted forms).
+                        if (el.tagName === 'TEXTAREA' || !el.disabled) el.value = val;
+                    }
                 }
             });
         }
@@ -8181,7 +8191,7 @@ updateProgressBar();updateResultsDashboard();
                 // Hook autosave into CodeMirror changes (CM doesn't fire DOM input events)
                 editor.on('change', function() {
                     clearTimeout(window._autoSaveTimer);
-                    window._autoSaveTimer = setTimeout(saveProgress, 1500);
+                    window._autoSaveTimer = setTimeout(saveProgress, 500);
                 });
                 window._cmEditors[id] = editor;});
             // Pre-fill empty task editors with Pascal program skeleton
