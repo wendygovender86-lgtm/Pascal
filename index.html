@@ -7524,7 +7524,11 @@ saveProgress();
                 if (counter) {
                     counter.textContent = `${answered.size} / 20 answered`;
                     if (answered.size === 20) { counter.style.background='rgba(63,185,80,0.12)'; counter.style.borderColor='rgba(63,185,80,0.3)'; counter.style.color='#3fb950'; }
-                }return;}
+                }
+                // Autosave radio selections so progress survives a page reload
+                clearTimeout(window._autoSaveTimer);
+                window._autoSaveTimer = setTimeout(saveProgress, 500);
+                return;}
             // Modules 2–7
             for (let m = 2; m <= 7; m++) {
                 const form = document.getElementById(`module${m}-assessment`);
@@ -7535,7 +7539,11 @@ saveProgress();
                     if (counter) {
                         counter.textContent = `${answered.size} / 20 answered`;
                         if (answered.size === 20) { counter.style.background='rgba(63,185,80,0.12)'; counter.style.borderColor='rgba(63,185,80,0.3)'; counter.style.color='#3fb950'; }
-                    }break;}}});
+                    }
+                    // Autosave radio selections so progress survives a page reload
+                    clearTimeout(window._autoSaveTimer);
+                    window._autoSaveTimer = setTimeout(saveProgress, 500);
+                    break;}}}); 
         // ═══════════════════════════════════════════════════════════
         // AUTOSAVE ON INPUT — saves IPO and coding content as students type
         // ═══════════════════════════════════════════════════════════
@@ -7946,12 +7954,24 @@ saveProgress();
                     if (ans.length) existingAnswers[m] = ans;
                 }
             });
+            // Also persist in-progress (draft) radio answers for open assessments
+            const draftAnswers = {};
+            for (let m = 1; m <= 7; m++) {
+                if (submittedModuleSet.has(m)) continue; // already fully saved
+                const formId = m === 1 ? 'module1-assessment' : `module${m}-assessment`;
+                const form = document.getElementById(formId);
+                if (!form) continue;
+                const draft = {};
+                form.querySelectorAll('input[type="radio"]:checked').forEach(r => { draft[r.name] = r.value; });
+                if (Object.keys(draft).length > 0) draftAnswers[m] = draft;
+            }
             const data = {unlockedModules,completedModules,
                 moduleScores: JSON.parse(JSON.stringify(moduleScores)),
                 codingDone: Object.fromEntries(
                     Object.entries(moduleTaskSets).map(([k,v]) => [k, [...v]])),
                 assessmentsSubmitted: submittedModules,
                 assessmentAnswers: existingAnswers,
+                assessmentDraftAnswers: draftAnswers,
                 ipoValues: _collectFieldValues(_ALL_IPO_IDS),
                 codeValues: _collectFieldValues(_ALL_CODE_IDS),
                 savedAt: Date.now()};
@@ -8014,7 +8034,7 @@ saveProgress();
                 });
 updateProgressBar();updateResultsDashboard();
                 // Store field values for deferred restore after CM editors are ready
-                window._pendingFieldRestore = { ipoValues: data.ipoValues, codeValues: data.codeValues };
+                window._pendingFieldRestore = { ipoValues: data.ipoValues, codeValues: data.codeValues, draftAnswers: data.assessmentDraftAnswers || {} };
                 const ind = document.getElementById('save-indicator');
                 if (ind && data.savedAt) {
                     const d = new Date(data.savedAt);
@@ -8136,18 +8156,37 @@ updateProgressBar();updateResultsDashboard();
                 const td = JSON.parse(localStorage.getItem('pascal_timers') || '{}');
                 Object.entries(td).forEach(([m, state]) => {
                     m = Number(m);
+                    // If this module was already submitted, clear the stale timer entry and skip
+                    if (submittedModuleSet.has(m)) {
+                        try {
+                            const td2 = JSON.parse(localStorage.getItem('pascal_timers') || '{}');
+                            delete td2[m];
+                            localStorage.setItem('pascal_timers', JSON.stringify(td2));
+                        } catch(e) {}
+                        return;
+                    }
                     const elapsed   = Math.floor((Date.now() - state.savedAt) / 1000);
                     const remaining = Math.max(0, state.secondsLeft - elapsed);
-                    const gate = document.getElementById(`assessment-gate-${m}`);
-                    const body = document.getElementById(`assessment-body-${m}`);
-                    if (gate) gate.style.display = 'none';
-                    if (body) body.classList.remove('hidden');
-                    _renderAssessmentQuestions(m);
                     if (remaining > 0) {
+                        // Timer still running — restore the open assessment
+                        const gate = document.getElementById(`assessment-gate-${m}`);
+                        const body = document.getElementById(`assessment-body-${m}`);
+                        if (gate) gate.style.display = 'none';
+                        if (body) body.classList.remove('hidden');
+                        _renderAssessmentQuestions(m);
                         _startTimer(m, remaining);
                     } else {
+                        // Timer expired and assessment not yet submitted — clear stale entry
+                        // and leave the gate visible so the student must submit manually
+                        try {
+                            const td2 = JSON.parse(localStorage.getItem('pascal_timers') || '{}');
+                            delete td2[m];
+                            localStorage.setItem('pascal_timers', JSON.stringify(td2));
+                        } catch(e) {}
                         const display = document.getElementById(`timer-display-${m}`);
-                        if (display) { display.textContent = '00:00'; display.className = 'timer-display danger'; }}});
+                        if (display) { display.textContent = '00:00'; display.className = 'timer-display danger'; }
+                    }
+                });
             } catch(e) {}}
         function _hideGateIfSubmitted(moduleNum) {
             document.getElementById(`assessment-gate-${moduleNum}`)?.style && (document.getElementById(`assessment-gate-${moduleNum}`).style.display = 'none');
@@ -8222,6 +8261,29 @@ updateProgressBar();updateResultsDashboard();
                 _restoreFieldValues(pfr.ipoValues);
                 _restoreFieldValues(pfr.codeValues);
                 setTimeout(_restoreIPOGreenStyling, 50);
+                // Restore in-progress (draft) radio selections for open assessments
+                if (pfr.draftAnswers) {
+                    Object.entries(pfr.draftAnswers).forEach(function([m, draft]) {
+                        m = Number(m);
+                        if (submittedModuleSet.has(m)) return; // skip submitted
+                        const formId = m === 1 ? 'module1-assessment' : `module${m}-assessment`;
+                        const form = document.getElementById(formId);
+                        if (!form) return;
+                        Object.entries(draft).forEach(function([name, value]) {
+                            const radio = form.querySelector(`input[type="radio"][name="${name}"][value="${value}"]`);
+                            if (radio) radio.checked = true;
+                        });
+                        // Update the answered counter to reflect restored selections
+                        const answered = new Set();
+                        form.querySelectorAll('input[type="radio"]:checked').forEach(r => answered.add(r.name));
+                        const counterId = m === 1 ? 'q-counter' : `q-counter-${m}`;
+                        const counter = document.getElementById(counterId);
+                        if (counter && answered.size > 0) {
+                            counter.textContent = `${answered.size} / 20 answered`;
+                            if (answered.size === 20) { counter.style.background='rgba(63,185,80,0.12)'; counter.style.borderColor='rgba(63,185,80,0.3)'; counter.style.color='#3fb950'; }
+                        }
+                    });
+                }
             }
             // Inject "💡 Hint" buttons into every coding task
             for (let m = 1; m <= 7; m++) {
