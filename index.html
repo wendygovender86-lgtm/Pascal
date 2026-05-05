@@ -5240,7 +5240,21 @@ end."></textarea>
                         if (icon) icon.style.transform = '';
                     } else {
                         this.setAttribute('aria-expanded', 'true');content.classList.add('expanded');
-                        if (icon) icon.style.transform = 'rotate(180deg)';}});});}
+                        if (icon) icon.style.transform = 'rotate(180deg)';
+                        // Refresh CodeMirror editors inside this accordion so they render
+                        // correctly after the container transitions from hidden to visible
+                        var _expandedContent = content;
+                        setTimeout(function() {
+                            if (window._cmEditors) {
+                                Object.keys(window._cmEditors).forEach(function(id) {
+                                    var wrapper = window._cmEditors[id].getWrapperElement();
+                                    if (_expandedContent.contains(wrapper)) {
+                                        window._cmEditors[id].refresh();
+                                    }
+                                });
+                            }
+                        }, 350);
+                    }});});}
         function _applyUnlockDOM(moduleEl) {
             const btn = moduleEl.querySelector('.accordion-toggle');
             if (!btn) return;
